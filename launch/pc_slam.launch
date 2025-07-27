@@ -1,0 +1,15 @@
+<launch>
+  <arg name="pose_file" default="slam_points.txt"/>
+  <arg name="save_file" default="merged_cloud.pcd"/>
+  <arg name="marker_file" default="red_marker_position"/>
+  <!-- 1. run robot pose control node -->
+  <node name="robot_move" pkg="robot_control" type="robot_move.py" output="screen" />
+
+  <!-- 2. run point cloud merge node -->
+  <node name="pointcloud_merge" pkg="pc_detection" type="pointcloud_merge.py" output="screen">
+    <!-- 可选参数：路径为相对于 pc_detection 包的相对路径 -->
+    <param name="pose_file" value="$(find pc_detection)/scripts/$(arg pose_file)"/>
+    <param name="save_file" value="$(arg save_file)"/>
+    <param name="marker_file" value="$(find pc_detection)/scripts/$(arg marker_file)"/>
+  </node>
+</launch>
