@@ -1,7 +1,7 @@
 <launch>
   <arg name="pose_file" default="slam_points.txt"/>
   <arg name="save_file" default="merged_cloud.pcd"/>
-  <arg name="marker_file" default="red_marker_position"/>
+  <arg name="marker_file" default="marker_position"/>
   <!-- 1. run robot pose control node -->
   <node name="robot_move" pkg="robot_control" type="robot_move.py" output="screen" />
 
