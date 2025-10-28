@@ -1,5 +1,5 @@
 # Point-Cloud-Based Labware Detection
-Detect the oriented bounding boxed of labware on the table based on point cloud captured in multiple robot poses, with the Cluster Algorithms.
+Detect the oriented bounding boxs of labware on the table based on point cloud captured in multiple robot poses, with the Cluster Algorithms.
 
 ```
 $ rosrun robot_control robot_init.py
