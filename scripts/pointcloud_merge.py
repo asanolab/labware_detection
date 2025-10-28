@@ -381,19 +381,21 @@ class PointCloudCollector:
         # 点云预处理
         accumulated_cloud = accumulated_cloud.voxel_down_sample(self.voxel_size)
         accumulated_cloud, _ = accumulated_cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+
         # 找到匹配真实位置
         sources, targets = self.match_to_known_markers(centers)
 
         # 姿态矫正（align z up）旋转变换
         R = self.align_plane_to_xy(accumulated_cloud)
-        accumulated_cloud.transform(R)
+        accumulated_cloud.transform(R) # should be executed
 
         centers_rotated = [(R @ np.append(source, 1))[:3] for source in sources]
 
         T = self.estimate_translation_only(centers_rotated, targets)
 
         # aruco平移变换
-        accumulated_cloud.transform(T)
+        accumulated_cloud.transform(T) # should be executed # should be excecuted
+
         # highlight_marker_area(accumulated_cloud, np.array([-0.11, 0.16, 0.0]), radius=0.01)
         self.collected_clouds.append(accumulated_cloud)
 

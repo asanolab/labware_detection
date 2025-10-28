@@ -46,6 +46,7 @@ class MarkerPosePublisher:
         rospy.Subscriber("/camera/aligned_depth_to_color/image_raw", Image, self.depth_cb)
         rospy.Subscriber("/camera/color/image_raw", Image, self.image_cb)
 
+
         rospy.loginfo("MarkerPosePublisher initialized.")
         rospy.spin()
 

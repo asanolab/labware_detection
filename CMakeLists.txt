@@ -170,7 +170,7 @@ include_directories(
    scripts/marker_publish.py
    scripts/pointcloud_merge.py
    scripts/publish_obb.py
-   scripts/obb_publisher_node.py
+   scripts/obb_publisher.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
  )
 

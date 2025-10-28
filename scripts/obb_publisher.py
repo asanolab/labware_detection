@@ -14,6 +14,7 @@ from scipy.spatial.transform import Rotation as R
 
 import os
 import sys
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)  # 放在最前面，避免被覆盖
@@ -24,7 +25,10 @@ print("[DEBUG] Added to sys.path:", script_dir)
 from obb_utils import (crop_cloud, clean_pointcloud, extract_table_plane, merge_objects_with_table_residual,
                        project_to_xoy, cluster_plane_objects, extract_main_colors_by_cluster,
                        load_color_templates_from_txt, classify_clusters_with_templates_strict,
-                       fit_rect_via_pca, visualize_and_fit_min_rect, plot_cluster_with_names, COLOR_TEMPLATE)
+                       fit_rect_via_pca, axis_aligned_min_area_rect, visualize_and_fit_min_rect,
+                       sort_and_reindex_clusters, plot_cluster_with_names, cluster_plane_objects_DBSCAN,
+                       save_3d_pointcloud_with_obb, COLOR_TEMPLATE, create_obb_geometry,
+                       create_obb_lineset, plot_clusters_with_legend, remove_near_black_points)
 
 
 class OBBPublisher:
@@ -80,11 +84,23 @@ class OBBPublisher:
 
     def process_and_publish_obb(self, pcd, header):
         # Step 1: Clean & Segment
+        origninal_pcd = pcd
         pcd = crop_cloud(pcd)
         o3d.visualization.draw_geometries([pcd], window_name='msg input')
         pcd = clean_pointcloud(pcd)
-        o3d.visualization.draw_geometries([pcd], window_name='cleaned pcd')
+        o3d.visualization.draw_geometries([pcd], window_name='Preprocessed Point Cloud')
         _, table, others = extract_table_plane(pcd)
+
+        #table_red = table
+        # others_green = others
+        # 桌面赋红色（RGB: 1, 0, 0）
+        # table_red.paint_uniform_color([1.0, 0.0, 0.0])
+
+        # 物体赋绿色（RGB: 0, 1, 0）
+        # others_green.paint_uniform_color([0.0, 1.0, 0.0])
+
+        # 可视化
+        # o3d.visualization.draw_geometries([table_red, others_green], window_name="Extract Table and Objects")
         o3d.visualization.draw_geometries([others], window_name='objects')
         table_pts, table_colors = np.asarray(table.points), np.asarray(table.colors)
         obj_pts, obj_colors = np.asarray(others.points), np.asarray(others.colors)
@@ -102,9 +118,15 @@ class OBBPublisher:
         projected_pcd.points = o3d.utility.Vector3dVector(projected)
         projected_pcd.colors = o3d.utility.Vector3dVector(all_colors)
 
-        o3d.visualization.draw_geometries([projected_pcd])
+        # o3d.visualization.draw_geometries([projected_pcd], window_name = "Projected Point Cloud")
 
-        projected_pcd = clean_pointcloud(projected_pcd, voxel_size=0.001)
+
+
+        #remove color black
+        projected_pcd = remove_near_black_points(projected_pcd, threshold=0.6)
+        projected_pcd = clean_pointcloud(projected_pcd, voxel_size=0.001, min_points=50)
+        projected_pcd = clean_pointcloud(projected_pcd, voxel_size=0.001, min_points=50)
+        o3d.visualization.draw_geometries([projected_pcd], window_name="Projected Point Cloud")
         points_2d = np.asarray(projected_pcd.points)[:, :2]
         colors_2d = np.asarray(projected_pcd.colors)
 
@@ -112,11 +134,17 @@ class OBBPublisher:
 
         # Step 2: Cluster
         labels = cluster_plane_objects(points_2d)
+        labels_dbscan = cluster_plane_objects_DBSCAN(points_2d)
+
+        plot_clusters_with_legend(points_2d,labels,method='HDBSCAN')
+        plot_clusters_with_legend(points_2d,labels_dbscan,method='DBSCAN')
 
         rospy.loginfo("Classify clustered points.")
         # Step 3: Classify
         cluster_colors_info = extract_main_colors_by_cluster(points_2d, colors_2d, labels)
         classified = classify_clusters_with_templates_strict(cluster_colors_info, self.template)
+
+
 
         rospy.loginfo(f"Classfied into {len(classified) - 1} clusters.")
         all_points = np.asarray(projected_pcd.points)
@@ -125,38 +153,32 @@ class OBBPublisher:
         name_mapping = {}
         obb_mapping = {}
 
-        for label in set(labels):
-            if label == -1 or label not in classified:
-                continue
+        # 准备一个映射表：每类物体名称 -> 拟合函数 + 高度
+        fit_rect_func_by_name = {
+            "tip rack": lambda pts: (axis_aligned_min_area_rect(pts), 0.10),
+            "pipette": lambda pts: (axis_aligned_min_area_rect(pts), 0.24),
+            "pH sensor": lambda pts: (fit_rect_via_pca(pts), 0.18),
+            "beaker": lambda pts: (fit_rect_via_pca(pts), 0.08),
+        }
 
-            obj_name = classified[label][0]
-            cluster_mask = (labels == label)
-            points2d = points_2d[cluster_mask]
-            # points3d = all_pts[cluster_mask]
+        sorted_clusters = sort_and_reindex_clusters(points_2d, labels, classified, fit_rect_func_by_name)
 
-            # Step 4: Fit OBB
-            if obj_name == "tip rack":
-                rect = visualize_and_fit_min_rect(points2d, alpha=0.0001)
-                height = 0.10
-            elif obj_name == "pipette":
-                rect = fit_rect_via_pca(points2d)
-                height = 0.30
-            elif obj_name == "pH sensor":
-                rect = fit_rect_via_pca(points2d)
-                height = 0.20
-            elif obj_name == "beaker":
-                rect = fit_rect_via_pca(points2d)
-                height = 0.08
-            else:
-                continue
-
-            name_mapping[label] = obj_name
-            obb_mapping[label] = rect
-
-            self.publish_obb(label, rect, height, header, obj_name)
+        for new_label, obj_name, rect, height in sorted_clusters:
+            name_mapping[new_label] = obj_name
+            obb_mapping[new_label] = rect
+            self.publish_obb(new_label, rect, height, header, obj_name)
 
         # 🧪 可视化聚类 + OBB
         plot_cluster_with_names(points_2d, labels, name_mapping, obb_mapping)
+        # 🧪 保存 3D 点云和 OBB 可视化
+        geometries = []
+        geometries.append(origninal_pcd)
+        for label, obj_name, rect, height in sorted_clusters:
+            rospy.loginfo(f"drawing OBB of {obj_name}")
+            obb = create_obb_lineset(rect[0], rect[1], rect[2], height)
+            geometries.append(obb)
+
+        o3d.visualization.draw_geometries(geometries, window_name="Full PointCloud with OBBs")
 
     def publish_obb(self, label, rect, height, header, obj_name):
         center_xy, (length, width), angle_deg = rect
@@ -165,7 +187,7 @@ class OBBPublisher:
         pose = Pose()
         pose.position.x = center_xy[0]
         pose.position.y = center_xy[1]
-        pose.position.z = height / 2.0
+        pose.position.z = 0.0
 
         quat = R.from_euler('z', angle_rad).as_quat()
         pose.orientation.x = quat[0]
@@ -180,8 +202,8 @@ class OBBPublisher:
         msg.y_width = width
         msg.z_height = height
 
-        topic_name = f"/labware"+f"/{obj_name.replace(' ', '_')}"
-        topic_name = topic_name + f'{label}'+f'/obb'
+        topic_name = f"/labware" + f"/{obj_name.replace(' ', '_')}"
+        topic_name = topic_name + f'{label}' + f'/obb'
         if topic_name not in self.publishers:
             self.publishers[topic_name] = rospy.Publisher(topic_name, LabwareOBB, queue_size=1, latch=True)
 
